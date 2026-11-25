@@ -1,6 +1,7 @@
 __all__ = [
     "__version__",
     "utils",
+    "regions",
     "pdfminer",
     "open",
     "repair",
@@ -10,7 +11,7 @@ __all__ = [
 import pdfminer
 import pdfminer.pdftypes
 
-from . import utils
+from . import regions, utils
 from ._version import __version__
 from .pdf import PDF
 from .repair import repair

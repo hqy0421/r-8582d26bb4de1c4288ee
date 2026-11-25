@@ -339,6 +339,45 @@ Note: The methods above are built on Pillow's [`ImageDraw` methods](http://pillo
 
 `im.debug_tablefinder(table_settings={})` will return a version of the PageImage with the detected lines (in red), intersections (circles), and tables (light blue) overlaid.
 
+### Extracting text from pixel regions
+
+If you annotate rectangles on the rendered image — to select columns, form fields, or other visual zones — pass them to `im.extract_regions(...)`. Each region is a rectangle in **image pixel** coordinates, with the origin at the image's top-left corner:
+
+```python
+im = page.to_image(resolution=150)
+
+result = im.extract_regions({
+    "header": (0, 0, 900, 120),
+    "body": (0, 120, 900, 1400),
+})
+
+for region in result["regions"]:
+    print(region["id"], repr(region["text"]))
+```
+
+The regions are mapped back to page coordinates using the image's own pixel dimensions and the page bounds it actually displays. That means:
+
+- **Rotation:** no rotation is applied when mapping, because both the page's coordinates and the rendered image already reflect the page's `/Rotate` value. Rotated pages are therefore not rotated twice.
+- **Offset CropBoxes and nested crops:** the origin is never assumed to be `(0, 0)`; pixel `(0, 0)` maps to the top-left of whatever area the image displays.
+- **Resolution:** pass regions as drawn on *that image*; mapping uses the image's actual size, whether created via `resolution=`, `width=`, or `height=`.
+
+`im.pixels_to_page(...)` and `im.page_to_pixels(...)` are available for converting individual points or bboxes, and `im.pixel_scale` reports the pixels-per-page-unit factors.
+
+Region inputs may be a single bbox, a list of bboxes, a dict of region ids to bboxes, a list of bbox-like dicts (with `id`/`name`), or a pandas `DataFrame` with `x0/top/x1/bottom` columns. Bboxes may also use `x0/y0/x1/y1` or `left/top/right/bottom` keys.
+
+**Assigning glyphs.** A glyph is placed in a region only when the two share a strictly positive area — *touching along an edge or at a corner does not count as an intersection*. If a glyph overlaps several regions, it goes to the region with the largest overlap area. If that largest area is tied, the glyph is not placed in any region; it is reported once under `conflicts`, so the same glyph never appears twice in the output.
+
+The returned dict contains:
+
+| Key | Description |
+|-----|-------------|
+| `regions` | One entry per region: `id`, `pixel_bbox`, `page_bbox`, `text`, `chars`, `char_count`, and `glyphs` (each with its `char`, `page_bbox`, `pixel_bbox`, and `overlap_area`). |
+| `unassigned` | Glyphs not placed in any region, each with a `reason`: `"outside_regions"`, `"edge_contact_only"` (it merely touched a region), or `"zero_area_glyph"`. Also lists `touching_regions` where relevant. |
+| `conflicts` | Glyphs with tied overlap areas, each with `candidates` (`id`, `index`, `overlap_area`) explaining the tie. |
+| `page_number`, `rotation`, `page_bbox`, `image_size`, `scale` | Context about the page and image used for the mapping. |
+
+Pass `include_unassigned=False` or `include_conflicts=False` to omit those lists, and any text-extraction keyword arguments (e.g. `x_tolerance`, `layout=True`) are forwarded when building each region's `text`.
+
 ## Extracting text
 
 `pdfplumber` can extract text from any given page (including cropped and derived pages). It can also attempt to preserve the layout of that text, as well as to identify the coordinates of words and search queries. `Page` objects can call the following text-extraction methods:

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## Unreleased
+
+### Added
+- Add `PageImage.extract_regions(...)` for extracting glyphs from rectangles annotated on a rendered page image. Pixel-space regions are mapped back to page coordinates using the image's actual size and displayed page bounds, so rotated pages, offset CropBoxes, and nested crops map correctly without assuming an origin of `(0, 0)` or rotating already-rotated pages. Glyphs overlapping multiple regions go to the region with the largest overlap area; ties (and edge-only contact) are reported rather than duplicated. Also add `PageImage.pixels_to_page(...)`, `PageImage.page_to_pixels(...)`, `PageImage.pixel_scale`, and the `pdfplumber.regions` module.
+
 ## [0.11.10] — 2026-06-14
 
 ### Changed

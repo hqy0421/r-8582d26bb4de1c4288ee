@@ -1,11 +1,13 @@
+import copy as _copy
 import pathlib
 from io import BufferedReader, BytesIO
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import PIL.Image
 import PIL.ImageDraw
 import pypdfium2  # type: ignore
 
+from . import regions as _regions
 from . import utils
 from ._typing import T_bbox, T_num, T_obj, T_obj_list, T_point, T_seq
 from .table import T_table_settings, Table, TableFinder, TableSettings
@@ -143,6 +145,98 @@ class PageImage:
         _top = (top - self.bbox[1]) * self.scale
         return (int(_x0), int(_top))
 
+    @property
+    def pixel_scale(self) -> Tuple[float, float]:
+        """Pixels per page unit, as ``(x, y)``, for this image.
+
+        The values are derived from the image's actual pixel dimensions and
+        from the page-space bounds of the area it displays, so they remain
+        correct for rotated pages, offset CropBoxes, and cropped pages.
+        """
+        return _regions.pixel_scale(self)
+
+    def pixels_to_page(self, value: Union[T_bbox, T_point, T_obj]) -> Any:
+        """Map a pixel coordinate, bbox, or bbox mapping to page coordinates.
+
+        Pixels are relative to the image's top-left corner.  Coordinates are
+        translated using this image's displayed page bounds rather than
+        assuming an origin of ``(0, 0)``, and no rotation is applied because
+        the page's rotation is already reflected in both the page coordinates
+        and the rendered image.
+        """
+        return _regions.pixels_to_page(self, value)
+
+    def page_to_pixels(self, value: Union[T_bbox, T_point, T_obj]) -> Any:
+        """Map a page coordinate, bbox, or bbox mapping to image pixels."""
+        return _regions.page_to_pixels(self, value)
+
+    def pixel_bbox_to_page(self, bbox: T_bbox) -> T_bbox:
+        """Map a pixel-space bbox to a page-space ``(x0, top, x1, bottom)``."""
+        return self.pixels_to_page(bbox)  # type: ignore[no-any-return]
+
+    def page_bbox_to_pixels(self, bbox: T_bbox) -> T_bbox:
+        """Map a page-space bbox to a pixel-space ``(x0, top, x1, bottom)``."""
+        return self.page_to_pixels(bbox)  # type: ignore[no-any-return]
+
+    def extract_regions(
+        self,
+        regions: Union[
+            T_bbox,
+            T_obj,
+            List[Union[T_bbox, T_obj]],
+            Dict[Any, Union[T_bbox, T_obj]],
+        ],
+        *,
+        include_unassigned: bool = True,
+        include_conflicts: bool = True,
+        **text_kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Extract the glyphs inside one or more pixel-space regions of this
+        image.
+
+        Each region is a rectangle in image pixel coordinates, with the
+        origin at the image's top-left corner.  Regions may be given as a
+        single bbox, a list of bboxes, a dict of region ids to bboxes, or a
+        list of bbox-like dicts.  They are mapped back to page coordinates
+        using this image's actual pixel dimensions and displayed page bounds
+        -- so rotated pages, offset CropBoxes, and nested crops are handled
+        without assuming the origin is ``(0, 0)`` and without rotating pages
+        that have already been rotated.
+
+        A glyph is assigned to a region when they share a strictly positive
+        area; touching along an edge or corner does not count.  A glyph that
+        overlaps several regions is assigned to the one with the largest
+        overlap area.  If that largest area is tied, the glyph is not
+        assigned to any region and is reported once under ``conflicts``.  So
+        every glyph appears in at most one region's output.
+
+        Any remaining keyword arguments (e.g. ``x_tolerance``,
+        ``line_dir_render``) are passed through to
+        ``pdfplumber.utils.extract_text`` when building each region's text.
+
+        Returns a dict with:
+
+        - ``regions``: one entry per region, containing ``id``,
+          ``pixel_bbox``, ``page_bbox``, ``text``, ``chars``, ``char_count``,
+          and ``glyphs`` (each glyph with ``page_bbox``, ``pixel_bbox``, and
+          ``overlap_area``).
+        - ``unassigned``: glyphs not placed in any region, each with a
+          ``reason`` of ``"outside_regions"``, ``"edge_contact_only"``, or
+          ``"zero_area_glyph"``.
+        - ``conflicts``: glyphs with tied overlap areas, each with its
+          ``candidates`` and their overlap areas.
+        - Page-level context: ``page_number``, ``rotation``, ``page_bbox``,
+          ``image_size``, and ``scale``.
+        """
+        return _regions.extract_regions(
+            self,
+            regions,
+            include_unassigned=include_unassigned,
+            include_conflicts=include_conflicts,
+            **text_kwargs,
+        )
+
     def reset(self) -> "PageImage":
         self.annotated = PIL.Image.new("RGB", self.original.size)
         self.annotated.paste(self.original)
@@ -174,7 +268,10 @@ class PageImage:
         )
 
     def copy(self) -> "PageImage":
-        return self.__class__(self.page, self.original)
+        # Re-running __init__ would crop the (already-cropped) original a
+        # second time and reset the resolution, so copy the attributes
+        # instead. See https://github.com/jsvine/pdfplumber/pull/1402
+        return _copy.copy(self).reset()
 
     def draw_line(
         self,
